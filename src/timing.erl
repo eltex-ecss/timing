@@ -29,10 +29,12 @@ function(Fun, N, P) ->
 -spec function(fun(), pos_integer(), pos_integer(), [proc_lib:spawn_option()]) -> [tuple()].
 
 function(Fun, N, P, Opts) ->
+    {ok, R} = hdr_histogram:open(N, 3),
     I = trunc(N / P),
     function_spawn_loop(self(), Fun, I, P, Opts),
-    Samples = lists:append(receive_loop(P)),
-    bear:get_statistics(Samples).
+    receive_loop(R, P),
+    hdr_histogram:log(R, classic, "timing.hgrm"),
+    hdr_histogram:close(R).
 
 %% private
 function_loop(_Fun, 0) ->
@@ -51,12 +53,13 @@ function_time(Fun) ->
     Fun(),
     timer:now_diff(os:timestamp(), Timestamp).
 
-receive_loop(0) ->
-    [];
-receive_loop(N) ->
+receive_loop(_R, 0) ->
+    ok;
+receive_loop(R, N) ->
     receive
         {'EXIT', _Pid, normal} ->
-            receive_loop(N);
-        X ->
-            [X | receive_loop(N - 1)]
+            receive_loop(R, N);
+        Times ->
+            [hdr_histogram:record(R, Time) || Time <- Times],
+            receive_loop(R, N - 1)
     end.
